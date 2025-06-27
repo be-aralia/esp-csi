@@ -1,0 +1,15 @@
+/** @mainpage ESP Radar Console Test
+ *
+ * This example demonstrates how to use the esp_radar component to process
+ * Wi-Fi Channel State Information (CSI) for presence detection. CSI frames are
+ * collected from a router or another ESP32 transmitter and analysed to obtain
+ * two metrics:
+ * - **waveform_wander**: long term variation of CSI amplitude.
+ * - **waveform_jitter**: short term fluctuation of CSI.
+ *
+ * The application filters these metrics over a sliding window. Wander is used
+ * to decide if someone is present while jitter indicates movement. Thresholds
+ * and sensitivities can be tuned via the console or the accompanying Python GUI
+ * tool. Processed results are printed in `RADAR_DATA` CSV format and can be
+ * visualised in real time.
+ */

@@ -7,6 +7,28 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
+/**
+ * @file app_main.c
+ * @brief Console radar example entry point
+ *
+ * This file contains the main application that receives Wi-Fi CSI and uses the
+ * esp_radar component to analyse human presence. CSI frames are forwarded to
+ * the radar algorithm which calculates **wander** and **jitter** values. Those
+ * metrics are filtered to determine whether someone is in the room and if a
+ * movement occurred. Results are printed to the console and visualised via an
+ * RGB LED.
+ *
+ * Data flow overview:
+ * - CSI is captured by the Wi-Fi driver and reported through
+ *   ::wifi_csi_raw_cb.
+ * - The callback copies the data into a queue processed by
+ *   ::csi_data_print_task to avoid blocking the Wi-Fi task.
+ * - esp_radar aggregates CSI and invokes ::wifi_radar_cb providing
+ *   pre-computed waveform metrics.
+ * - ::wifi_radar_cb applies threshold filtering to output room and human
+ *   status.
+ */
+
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
@@ -135,6 +157,17 @@ static void collect_timercb(TimerHandle_t timer)
     }
 }
 
+/**
+ * @brief Console command handler for radar configuration
+ *
+ * This command allows runtime configuration of the radar algorithm parameters
+ * such as thresholds, sensitivities and CSI output format. It also exposes
+ * training and data collection functionality used by the Python GUI tool.
+ *
+ * @param argc Argument count
+ * @param argv Argument array
+ * @return ESP_OK on success
+ */
 static int wifi_cmd_radar(int argc, char **argv)
 {
     if (arg_parse(argc, argv, (void **) &radar_args) != ESP_OK) {
@@ -253,6 +286,13 @@ static int wifi_cmd_radar(int argc, char **argv)
     return ESP_OK;
 }
 
+/**
+ * @brief Register the radar console command
+ *
+ * Installs the `radar` command into the console interpreter. The command is
+ * used to start/stop training, tune algorithm parameters and control CSI
+ * output. It is primarily consumed by the accompanying Python GUI tool.
+ */
 void cmd_register_radar(void)
 {
     radar_args.train_start = arg_lit0(NULL, "train_start", "Start calibrating the 'Radar' algorithm");
@@ -292,6 +332,16 @@ void cmd_register_radar(void)
     ESP_ERROR_CHECK(esp_console_cmd_register(&radar_cmd));
 }
 
+/**
+ * @brief Task that formats and prints CSI data
+ *
+ * CSI frames placed into the queue are retrieved here and converted to text in
+ * either decimal or Base64 representation. The formatted output is written to
+ * the console so that external tools can parse and display the waveform in
+ * real time.
+ *
+ * @param arg Unused task argument
+ */
 static void csi_data_print_task(void *arg)
 {
     wifi_csi_filtered_info_t *info = NULL;
@@ -346,6 +396,16 @@ static void csi_data_print_task(void *arg)
     vTaskDelete(NULL);
 }
 
+/**
+ * @brief Receive CSI frames from the Wi-Fi driver
+ *
+ * The Wi-Fi driver delivers CSI measurements via this callback. The data is
+ * copied and placed into a queue so that heavy printing operations can be
+ * executed in a separate task without blocking the Wi-Fi stack.
+ *
+ * @param info Pointer to filtered CSI information provided by esp_radar
+ * @param ctx  Unused context pointer
+ */
 void wifi_csi_raw_cb(const wifi_csi_filtered_info_t *info, void *ctx)
 {
     wifi_csi_filtered_info_t *q_data = malloc(sizeof(wifi_csi_filtered_info_t) + info->valid_len);
@@ -358,6 +418,20 @@ void wifi_csi_raw_cb(const wifi_csi_filtered_info_t *info, void *ctx)
     }
 }
 
+/**
+ * @brief Callback from esp_radar with processed CSI metrics
+ *
+ * This function implements the presence detection algorithm. It stores the
+ * @p waveform_wander and @p waveform_jitter values in ring buffers to form a
+ * short history. After enough samples are collected the buffers are analysed to
+ * determine whether someone is in the room and if movement is present. The
+ * algorithm compares the averaged wander against a configurable threshold for
+ * presence detection and the jitter value for movement detection. Results are
+ * printed to the console and indicated using the WS2812 LED.
+ *
+ * @param info Pointer to the radar information structure provided by esp_radar
+ * @param ctx  Optional timestamp string passed from the CSI TCP server
+ */
 static void wifi_radar_cb(const wifi_radar_info_t *info, void *ctx)
 {
     static float *s_buff_wander  = NULL;
