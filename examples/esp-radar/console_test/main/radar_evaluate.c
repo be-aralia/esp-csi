@@ -7,6 +7,18 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
+/**
+ * @file radar_evaluate.c
+ * @brief TCP server for offline radar evaluation
+ *
+ * This module receives CSI data over TCP from an external source (typically the
+ * Python visualization tool). Each incoming frame is parsed and pushed into the
+ * esp_radar processing pipeline. The timestamp provided by the sender is stored
+ * in @c g_wifi_radar_cb_ctx so that ::wifi_radar_cb can use it when printing the
+ * detection results. The implementation allows evaluation of the algorithm with
+ * prerecorded CSI streams.
+ */
+
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
@@ -70,6 +82,17 @@ static char g_wifi_radar_cb_ctx[32] = {0};
 static TaskHandle_t g_tcp_server_task_handle = NULL;
 
 
+/**
+ * @brief Decode one line of CSI text
+ *
+ * The TCP server receives CSI lines formatted by the Python tool. This helper
+ * function splits the comma separated fields, decodes the Base64 payload and
+ * pushes the resulting ::wifi_csi_filtered_info_t structure into the radar
+ * pipeline.
+ *
+ * @param data Pointer to the start of the CSI line
+ * @param size Length of the line in bytes
+ */
 static void csi_info_analysis(char *data, size_t size)
 {
     uint8_t column = 0;
@@ -100,6 +123,16 @@ static void csi_info_analysis(char *data, size_t size)
     free(csi_data);
 }
 
+/**
+ * @brief Receive CSI data over TCP
+ *
+ * Creates a simple TCP server which accepts one client connection. The server
+ * accumulates incoming bytes until a newline is encountered and then passes the
+ * line to ::csi_info_analysis. Parsed CSI frames are forwarded to esp_radar so
+ * that the same detection logic can be exercised with offline data.
+ *
+ * @param arg Port number cast to (void *)
+ */
 static void tcp_server_task(void *arg)
 {
     char addr_str[128];
@@ -242,6 +275,14 @@ CLEAN_UP:
 }
 
 
+/**
+ * @brief Start the radar evaluation TCP server
+ *
+ * Spawns ::tcp_server_task on the given port if it is not already running.
+ *
+ * @param port TCP port number to listen on
+ * @return ESP_OK on success
+ */
 esp_err_t radar_evaluate_server(uint32_t port)
 {
     if (!g_tcp_server_task_handle) {
